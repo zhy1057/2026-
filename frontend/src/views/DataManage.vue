@@ -2,8 +2,8 @@
   <div class="data-page">
     <div class="page-header">
       <h2 class="page-title">📦 数据集管理</h2>
-      <button v-if="isAdmin" class="el-btn primary" @click="showUploadModal = true">
-        ⬆️ 上传数据集
+      <button class="el-btn primary" @click="showUploadModal = true">
+        ⬆️ 导入数据集
       </button>
     </div>
 
@@ -201,33 +201,53 @@
       </div>
     </div>
 
-    <!-- 上传弹窗 -->
+    <!-- 导入数据弹窗 -->
     <div v-if="showUploadModal" class="modal-mask" @click.self="closeUploadModal">
       <div class="modal-card">
-        <div class="modal-title">上传数据集（.h5ad）</div>
+        <div class="modal-title">📂 从本地导入数据集</div>
         <div class="modal-body">
           <div class="form-row">
-            <label>数据集名称（可选）</label>
-            <input v-model="uploadForm.name" class="el-input" placeholder="留空则使用文件名" />
+            <label>数据集名称（可选，留空则使用文件名）</label>
+            <input v-model="uploadForm.name" class="el-input" placeholder="例如: liver、pbmc3k" />
           </div>
           <div class="form-row">
-            <label>选择文件</label>
-            <input ref="fileInput" type="file" accept=".h5ad" @change="onFileChange" />
-            <div v-if="uploadForm.file" class="file-info">
-              已选择：{{ uploadForm.file.name }} ({{ formatSize(uploadForm.file.size) }})
+            <label>选择 .h5ad 文件</label>
+            <div
+              class="drop-zone"
+              :class="{ dragover: isDragOver }"
+              @dragover.prevent="isDragOver = true"
+              @dragleave.prevent="isDragOver = false"
+              @drop.prevent="onDrop"
+              @click="fileInput?.click()"
+            >
+              <input ref="fileInput" type="file" accept=".h5ad" style="display:none" @change="onFileChange" />
+              <div v-if="!uploadForm.file" class="drop-hint">
+                <span class="drop-icon">📁</span>
+                <span>点击选择文件 或 拖拽 .h5ad 文件到此处</span>
+                <span class="drop-sub">支持格式：AnnData (.h5ad)</span>
+              </div>
+              <div v-else class="drop-selected">
+                <span class="file-icon">📄</span>
+                <div class="file-detail">
+                  <span class="file-name">{{ uploadForm.file.name }}</span>
+                  <span class="file-size">{{ formatSize(uploadForm.file.size) }}</span>
+                </div>
+                <button class="el-btn small" @click.stop="clearFile">重选</button>
+              </div>
             </div>
+            <div v-if="fileError" class="el-alert error" style="margin-top:8px;padding:8px 12px;">{{ fileError }}</div>
           </div>
           <div v-if="uploading" class="upload-progress">
             <div class="progress-bar">
               <div class="progress-inner" :style="{ width: uploadProgress + '%' }"></div>
             </div>
-            <div class="progress-label">{{ uploadProgress }}%</div>
+            <div class="progress-label">{{ uploadProgress }}% · 正在导入中，请勿关闭页面...</div>
           </div>
         </div>
         <div class="modal-footer">
           <button class="el-btn" @click="closeUploadModal" :disabled="uploading">取消</button>
-          <button class="el-btn primary" :disabled="uploading || !uploadForm.file" @click="uploadFile">
-            {{ uploading ? '上传中...' : '上传' }}
+          <button class="el-btn primary" :disabled="uploading || !uploadForm.file || !!fileError" @click="uploadFile">
+            {{ uploading ? '导入中...' : '🚀 开始导入' }}
           </button>
         </div>
       </div>
@@ -274,12 +294,14 @@ const buildForm = reactive({
 })
 const building = ref(false)
 
-// 上传
+// 导入
 const showUploadModal = ref(false)
 const fileInput = ref(null)
 const uploadForm = reactive({ name: '', file: null })
 const uploading = ref(false)
 const uploadProgress = ref(0)
+const isDragOver = ref(false)
+const fileError = ref('')
 
 // 确认弹窗
 const confirmDialog = reactive({
@@ -468,13 +490,43 @@ async function confirmAction() {
   if (action) await action()
 }
 
-// ============ 上传 ============
+// ============ 数据导入 ============
+
+function validateFile(file) {
+  if (!file) return '请选择文件'
+  if (!file.name.endsWith('.h5ad')) return '仅支持 .h5ad 格式文件'
+  // 警告大文件（>2GB）
+  if (file.size > 2 * 1024 * 1024 * 1024) return '文件超过 2GB，导入可能耗时较长'
+  return ''
+}
+
+function setFile(file) {
+  const err = validateFile(file)
+  // 超过 2GB 只是警告，不阻止
+  if (err && !err.includes('耗时')) {
+    fileError.value = err
+    uploadForm.file = null
+    return
+  }
+  fileError.value = err  // 可能是警告
+  uploadForm.file = file
+}
 
 function onFileChange(e) {
   const file = e.target.files[0]
-  if (file) {
-    uploadForm.file = file
-  }
+  if (file) setFile(file)
+}
+
+function onDrop(e) {
+  isDragOver.value = false
+  const file = e.dataTransfer?.files[0]
+  if (file) setFile(file)
+}
+
+function clearFile() {
+  uploadForm.file = null
+  fileError.value = ''
+  if (fileInput.value) fileInput.value.value = ''
 }
 
 function closeUploadModal() {
@@ -483,6 +535,8 @@ function closeUploadModal() {
   uploadForm.name = ''
   uploadForm.file = null
   uploadProgress.value = 0
+  fileError.value = ''
+  isDragOver.value = false
   if (fileInput.value) fileInput.value.value = ''
 }
 
@@ -506,7 +560,7 @@ async function uploadFile() {
       }
     })
     if (res.code === 0) {
-      showSuccess('上传成功')
+      showSuccess('数据集导入成功！')
       closeUploadModal()
       await loadDatasets()
     } else {
@@ -826,6 +880,73 @@ onMounted(loadDatasets)
   margin-top: 8px;
   font-size: 12px;
   color: #67c23a;
+}
+
+/* ===== 拖拽导入区域 ===== */
+.drop-zone {
+  border: 2px dashed #dcdfe6;
+  border-radius: 8px;
+  padding: 32px 20px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  background: #fafbfc;
+}
+
+.drop-zone:hover {
+  border-color: #409eff;
+  background: #f5faff;
+}
+
+.drop-zone.dragover {
+  border-color: #409eff;
+  background: #ecf5ff;
+  box-shadow: 0 0 0 4px rgba(64, 158, 255, 0.1);
+}
+
+.drop-hint {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  color: #909399;
+}
+
+.drop-icon {
+  font-size: 36px;
+}
+
+.drop-sub {
+  font-size: 12px;
+  color: #c0c4cc;
+}
+
+.drop-selected {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  justify-content: center;
+}
+
+.file-icon {
+  font-size: 28px;
+}
+
+.file-detail {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.file-name {
+  color: #303133;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.file-size {
+  color: #909399;
+  font-size: 12px;
 }
 
 .upload-progress {
